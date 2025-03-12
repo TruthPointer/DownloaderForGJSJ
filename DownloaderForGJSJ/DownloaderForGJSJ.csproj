@@ -1,0 +1,39 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows7.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>downloader_gjsj.ico</ApplicationIcon>
+    <AssemblyVersion>1.5.2024.0912</AssemblyVersion>
+    <FileVersion>1.5.2024.0912</FileVersion>
+    <AssemblyName>干净世界下载器</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="downloader_gjsj.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="HtmlAgilityPack" Version="1.11.59" />
+    <PackageReference Include="HtmlAgilityPack.CssSelectors.NetCore" Version="1.2.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\VideoDL-m3u8\VideoDL-m3u8.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="images\fetch_web_link.png" />
+    <Resource Include="images\merge_file.png" />
+    <Resource Include="images\open_file.png" />
+    <Resource Include="images\pause_download.png" />
+    <Resource Include="images\start_download.png" />
+    <Resource Include="images\stop_download.png" />
+    <Resource Include="images\test.png" />
+  </ItemGroup>
+
+</Project>
