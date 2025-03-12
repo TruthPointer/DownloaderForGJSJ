@@ -53,16 +53,18 @@ namespace DownloaderForGJSJ
             public string FileExtension { get; set; }
             public int ThreadNum { get; set; }
             public bool UseProxy { get; set; }
-            public int ProxyPort { get; set; }
+            public string ProxyHost = PROXY_HOST_DEFAULT;
+            public int ProxyPort = PROXY_PORT_DEFAULT;
 
             public List<string>? UserAgents = null;
-            public WebSite(string selectorForUrl1, string selectorForUrl2, string fileExtension, int ThreadNum, bool UseProxy, int ProxyPort, List<string>? userAgents)
+            public WebSite(string selectorForUrl1, string selectorForUrl2, string fileExtension, int ThreadNum, bool UseProxy, string ProxyHost, int ProxyPort, List<string>? userAgents)
             {
                 this.SelectorForUrl1 = selectorForUrl1;
                 this.SelectorForUrl2 = selectorForUrl2;
                 this.FileExtension = fileExtension;
                 this.ThreadNum = ThreadNum;
                 this.UseProxy = UseProxy;
+                this.ProxyHost = ProxyHost;
                 this.ProxyPort = ProxyPort;
                 UserAgents = userAgents;
             }
@@ -337,6 +339,21 @@ namespace DownloaderForGJSJ
             STATE_VIDEO_AUDIO_OK,
             STATE_NONE
         }
+
+        class ProxyState
+        {
+            public bool UseProxy;
+            public string ProxyHost;
+            public int ProxyPort;
+            public bool IsProxyChanged;
+            public ProxyState(bool useProxy = true, string proxyHost = PROXY_HOST_DEFAULT, int proxyPort = PROXY_PORT_DEFAULT, bool isProxyChanged = false)
+            {
+                UseProxy = useProxy;
+                ProxyHost = proxyHost;
+                ProxyPort = proxyPort;
+                IsProxyChanged = isProxyChanged;
+            }
+        }
         #endregion
 
         /////////////////////////////////////////////////////
@@ -348,15 +365,13 @@ namespace DownloaderForGJSJ
         private string SETTINGS_JSON_FILE = APP_PATH + @"\settings.json";
         private string DOWNLOAD_HISTORY_JSON_FILE = APP_PATH + @"\download_history.json";
         private string FFMPEG_FILE = APP_PATH + @"\ffmpeg.exe";
+        private string TMP_FILE = APP_PATH + @"\tmp";
         ObservableCollection<DownloadItem> downloadItemList = new ObservableCollection<DownloadItem>();
         List<DownloadItem> downloadList = new List<DownloadItem>();
         ObservableTaskProgress<double> taskProgress = new ObservableTaskProgress<double>();
         private const string USER_AGENT_DEFAULT = @"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4692.99 Safari/537.36";
-        private const string PROXY_HOST = "127.0.0.1";
+        private const string PROXY_HOST_DEFAULT = "127.0.0.1";
         private const int PROXY_PORT_DEFAULT = 8580;
-        private int proxyPort = 0;
-        private bool useProxy = true;
-        private const int MAX_TRY_TIMES = 3;
 
         private const string WEB_SITE_NAME = "干净世界";
 
@@ -367,8 +382,8 @@ namespace DownloaderForGJSJ
         //private int oldCmbPageValueIndex = -1;
         private bool oldUseProxy = false;
         private int oldProxyPort = 0;
+        private ProxyState proxyState = new ProxyState();
 
-        //
         private string userAgent = USER_AGENT_DEFAULT;
 
         bool test = false; //!!!
@@ -477,15 +492,14 @@ namespace DownloaderForGJSJ
                 //初始化线程数量
                 InitThreadNumCombox(webSite.ThreadNum);
                 ckbUseProxy.IsChecked = webSite.UseProxy;
-                tbProxyPort.Text = webSite.ProxyPort.ToString();//20220623
-                useProxy = webSite.UseProxy;
-                oldUseProxy = useProxy;
-                ValidateProxy();
-                oldProxyPort = proxyPort;
+                InitProxy(webSite);
+                tbProxy.Text = $"{webSite.ProxyHost}:{webSite.ProxyPort}";
+                //
                 if (webSite.UserAgents != null && webSite.UserAgents.Count > 0)
                 {
                     userAgent = webSite.UserAgents[new Random().Next(webSite.UserAgents.Count)];
                 }
+                Log($"App UserAgent = {userAgent}");
             }
             catch (Exception e)
             {
@@ -552,6 +566,31 @@ namespace DownloaderForGJSJ
             }
         }
 
+        private void InitProxy(WebSite webSite)
+        {
+            //1.
+            proxyState.UseProxy = webSite.UseProxy;
+            proxyState.IsProxyChanged = false;
+            proxyState.ProxyHost = webSite.ProxyHost;
+            proxyState.ProxyPort = webSite.ProxyPort;
+            //2.
+            string errInfo = "";
+            if (!IsProxyHostValid(webSite.ProxyHost))
+            {
+                errInfo += "主机";
+            }
+
+            if (!IsProxyPortValid(webSite.ProxyPort))
+            {
+                if (string.IsNullOrEmpty(errInfo))
+                    errInfo += "端口";
+                else
+                    errInfo += "和端口";
+            }
+            if (string.IsNullOrEmpty(errInfo)) return;
+            MessageBoxError("代理的" + errInfo + "设置错误！请修改。");
+        }
+
         #endregion
 
         /////////////////////////////////////////////////////
@@ -559,9 +598,14 @@ namespace DownloaderForGJSJ
         #region
         private void Window_Closed(object sender, EventArgs e)
         {
+            CheckProxyStateOnCloseApp();
             SaveMainJson();
+            ClearTmpFile();
         }
 
+        /// <summary>
+        /// 代理的保存，为上一次正确运行的代理状态参数
+        /// </summary>
         private void SaveMainJson()
         {
             //注意2个index要加 1
@@ -571,12 +615,11 @@ namespace DownloaderForGJSJ
                 if (webSite == null) return;
                 webSite.ThreadNum = threadNums[cmbThreadNum.SelectedIndex];
                 webSite.UseProxy = (bool)(ckbUseProxy.IsChecked ?? false);
-                webSite.ProxyPort = int.Parse(tbProxyPort.Text);
                 string json = JsonConvert.SerializeObject(webSite, Formatting.Indented);
                 File.WriteAllText(SETTINGS_JSON_FILE, json);
                 //2.
                 //2.1 检查是否需要保存
-                if (webSite == null) return;
+                //if (webSite == null) return;
                 List<DownloadPackage> downloadPackages = PrepareDownloadPackageData();
                 if (downloadPackages.Count == 0)
                 {
@@ -678,18 +721,14 @@ namespace DownloaderForGJSJ
             try
             {
                 //1.
-                if ((webSite == null || webSite.UseProxy) && proxyPort == 0)
-                {
-                    MessageBoxErrorWithoutResultOnUI("端口设置错误！");
-                    return "";
-                }
                 //2.
                 HttpWebRequest hwr = (HttpWebRequest)HttpWebRequest.Create(url);
                 hwr.Headers.Add("User-Agent", userAgent);//20240912
                 //设置下载请求超时为200秒
                 hwr.Timeout = 15000;
-                Log("Proxy: host = " + PROXY_HOST + ", port = " + proxyPort);
-                hwr.Proxy = new WebProxy(PROXY_HOST, proxyPort);
+                Log($"Proxy: useProxy = {proxyState.UseProxy}, host = {proxyState.ProxyHost}, port = {proxyState.ProxyPort}");
+                if (proxyState.UseProxy)
+                    hwr.Proxy = new WebProxy(proxyState.ProxyHost, proxyState.ProxyPort);
                 //得到HttpWebResponse对象
                 HttpWebResponse hwp = (HttpWebResponse)hwr.GetResponse();
                 //根据HttpWebResponse对象的GetResponseStream()方法得到用于下载数据的网络流对象
@@ -804,6 +843,12 @@ namespace DownloaderForGJSJ
         {
             return fullFileName.Replace(DOWNLOAD_PATH, "");
         }
+
+        private void ClearTmpFile()
+        {
+            if (File.Exists(TMP_FILE))
+                File.Delete(TMP_FILE);
+        }
         #endregion
 
         /////////////////////////////////////////////////////
@@ -840,7 +885,7 @@ namespace DownloaderForGJSJ
         {
             if (string.IsNullOrEmpty(url))
             {
-                MessageBoxError("“网页链接”为空！{action}");
+                MessageBoxError("“网页链接”为空！");
                 return false;
             }
             if (!url.StartsWith("http", false, null))
@@ -918,29 +963,89 @@ namespace DownloaderForGJSJ
 
         private bool ValidateProxy()
         {
-            useProxy = (bool)(ckbUseProxy.IsChecked ?? false);
+            bool useProxy = (bool)(ckbUseProxy.IsChecked ?? false);
+            if (webSite != null)
+                webSite.UseProxy = useProxy;
+            proxyState.UseProxy = useProxy;
             if (!useProxy) return true;
 
-            //proxyHost = tbProxyHost.Text.Trim();
-            if (!Regex.IsMatch(PROXY_HOST, @"^([\w-]+\.)+[\w-]+(/[\w-./?%&=]*)?$"))
+            return ValidateTextBoxProxy();
+        }
+
+        private (string host, string port) ParseTbProxy()
+        {
+            string proxy = tbProxy.Text.Trim();
+            var para = proxy.Split(':');
+            if (para.Length != 2)
             {
-                MessageBoxError("代理主机设置错误！");
+                return ("", "");
+            }
+            return (para[0], para[1]);
+        }
+
+        private bool ValidateTextBoxProxy()
+        {
+            if (webSite == null) return false;
+
+            var (sHost, sPort) = ParseTbProxy();
+            if (!IsProxyHostValid(sHost))
+            {
+                MessageBoxError("代理的主机设置错误！");
                 return false;
             }
-            //tbProxyHost.Text = proxyHost;
-
-            string port = tbProxyPort.Text.Trim();
-            if (!Regex.IsMatch(port, @"^\d+$"))
+            if (!IsProxyPortValid(sPort))
             {
-                MessageBoxError("代理端口设置错误！");
-                tbProxyPort.Text = PROXY_PORT_DEFAULT.ToString();
-                proxyPort = PROXY_PORT_DEFAULT;
+                MessageBoxError("代理的端口设置错误！");
                 return false;
             }
-            tbProxyPort.Text = port;
-            proxyPort = Int32.Parse(port);
 
+            int proxyPort = Int32.Parse(sPort);
+
+            proxyState.IsProxyChanged = webSite.ProxyHost != sHost || webSite.ProxyPort != proxyPort;
+            proxyState.ProxyHost = sHost;
+            proxyState.ProxyPort = proxyPort;
+            webSite.ProxyHost = sHost;
+            webSite.ProxyPort = proxyPort;
+            if (proxyState.IsProxyChanged)
+            {
+                SaveMainJson();
+            }
+            Log($"ValidateTextBoxProxy: useProxy = {proxyState.UseProxy}, isProxyChanged = {proxyState.IsProxyChanged}, host = {proxyState.ProxyHost}, port = {proxyState.ProxyPort}");
             return true;
+        }
+
+        private void CheckProxyStateOnCloseApp()
+        {
+            if (webSite == null) return;
+            webSite.UseProxy = (bool)(ckbUseProxy.IsChecked ?? false);
+
+            var (sHost, sPort) = ParseTbProxy();
+            if (!IsProxyHostValid(sHost) || !IsProxyPortValid(sPort))
+            {
+                MessageBoxError("代理设置错误！不会保存最新的代理设置。");
+                return;
+            }
+            int proxyPort = Int32.Parse(sPort);
+            webSite.ProxyHost = sHost;
+            webSite.ProxyPort = proxyPort;
+        }
+
+        private bool IsProxyHostValid(string host)
+        {
+            return !string.IsNullOrEmpty(host) && Regex.IsMatch(host, @"^([\w-]+\.)+[\w-]+(/[\w-./?%&=]*)?$");
+        }
+
+        private bool IsProxyPortValid(string portString)
+        {
+            if (string.IsNullOrEmpty(portString)) return false;
+            if (!Regex.IsMatch(portString, @"\d+")) return false;
+            int port = Int32.Parse(portString);
+            return port >= 1024 && port <= 65535;
+        }
+
+        private bool IsProxyPortValid(int port)
+        {
+            return port >= 1024 && port <= 65535;
         }
 
         #endregion
@@ -966,7 +1071,7 @@ namespace DownloaderForGJSJ
                 return;
             }
             //3.
-            VideoDL videoDL = useProxy ? new VideoDL(proxy: $"http://{PROXY_HOST}:{proxyPort}") : new VideoDL();//proxy: "socks5://127.0.0.1:8000"
+            VideoDL videoDL = proxyState.UseProxy ? new VideoDL(proxy: $"http://{proxyState.ProxyHost}:{proxyState.ProxyPort}") : new VideoDL();//proxy: "socks5://127.0.0.1:8000"
             var hlsDL = videoDL.Hls;
             string mediaFilePath = GetMediaFileNameWithoutExtionForGjsj(downloadItemList[0].fileName);//???
             string parentDir;// = DOWNLOAD_PATH + $@"\{mediaFilePath}";//???
@@ -1105,7 +1210,7 @@ namespace DownloaderForGJSJ
             {
                 string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(item.fileName);//【非常重要】下载部分会自动添加扩展名，此处只需提供无扩展名的文件名，避免形成 .mp4.mp4 的错误
                 //return await DownloadGJSJMediaPart(hlsDL, parentDir, item.id, item.downloadUrl, item.fileName, mediaPartNum: mediaPartNum, taskProgressStartPoint: taskProgressStartPoint);
-                return await DownloadGJSJMediaPart(hlsDL, parentDir, item.id, item.downloadUrl, fileNameWithoutExtension, userAgent = $"User-Agent:{userAgent}", mediaPartNum: mediaPartNum, taskProgressStartPoint: taskProgressStartPoint, cancellationToken: cancellationToken);
+                return await DownloadGJSJMediaPart(hlsDL, parentDir, item.id, item.downloadUrl, fileNameWithoutExtension, header: $"User-Agent:{userAgent}", mediaPartNum: mediaPartNum, taskProgressStartPoint: taskProgressStartPoint, cancellationToken: cancellationToken);
             }
             catch (Exception e)
             {
@@ -1125,7 +1230,7 @@ namespace DownloaderForGJSJ
                 {
                     CtrolWidgetsOnTask(AppTask.TASK_DOWNLOAD, false, $"合并 {lastFileName} 失败！");
                     return false;
-                };
+                }
                 taskProgress.TaskProgress = 100;
                 CtrolWidgetsOnTask(AppTask.TASK_DOWNLOAD, false);
                 return true;
@@ -1445,7 +1550,7 @@ namespace DownloaderForGJSJ
                 btnStopDownload.IsEnabled = task == AppTask.TASK_DOWNLOAD ? true : isEnabled;
 
                 ckbUseProxy.IsEnabled = isEnabled;
-                tbProxyPort.IsEnabled = isEnabled;
+                tbProxy.IsEnabled = isEnabled;
                 cmbThreadNum.IsEnabled = isEnabled;
             });
         }
@@ -1516,26 +1621,6 @@ namespace DownloaderForGJSJ
                 Clipboard.SetDataObject(m3u8Url);
                 MessageBoxTimeoutA((IntPtr)0, "已将下载连接复制到剪贴板上了！", "提示", 0, 0, 3000);
                 e.Handled = true;
-            }
-        }
-
-        private void tbProxyPort_PreviewKeyDown(object sender, KeyEventArgs e)
-        {
-            strPreviousProxyPort = this.tbProxyPort.Text;
-            bIsPasteOperation = true;
-        }
-
-        private void tbProxyPort_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (true == bIsPasteOperation)
-            {
-
-                if (false == this.IsNumber(this.tbProxyPort.Text))
-                {
-                    this.tbProxyPort.Text = strPreviousProxyPort;
-                    e.Handled = true;
-                }
-                bIsPasteOperation = false;
             }
         }
 
@@ -1610,10 +1695,10 @@ namespace DownloaderForGJSJ
         #region
         //const bool GJSJ_DOWNLOAD_BY_BYTE_RANGE = false;//作为单一ts文件下载
         //const bool ENABLE_VIDEO_CONVERTOR_BUTTON = false;//
-        private async void FetchDownloadUrlForGJSJ(string url, string proxyHost = PROXY_HOST, int proxyPort = 8580)
+        private async void FetchDownloadUrlForGJSJ(string url)
         {
-            //string url = "https://www.ganjingworld.com/zh-CN/video/1g8kc0kr507FDt4Xsy09UjfVB1191c";
-            //url = "https://www.ganjingworld.com/live/1fr4d3v25555D0ySiVdLhCw5j1re1c";
+            //string url = "";
+            //url = "";
 
             /*string url = tbTaskTarget.Text;
             if(url.Length == 0)
@@ -1621,7 +1706,7 @@ namespace DownloaderForGJSJ
                 MessageBoxInformation("干净世界视频网页连接为空，请输入！");
                 return;
             }*/
-            string videoName = await ParseGjsjVideoUrlAsyn(url, proxyHost, proxyPort);
+            string videoName = await ParseGjsjVideoUrlAsyn(url);
             if (string.IsNullOrEmpty(videoName))
             {
                 //MessageBoxInformation("干净世界视频网页连接为空，请输入！");
@@ -1682,7 +1767,7 @@ namespace DownloaderForGJSJ
             return dialog.GetSelectionIndex();
         }
 
-        private Task<string> ParseGjsjVideoUrlAsyn(string url, string proxyHost = PROXY_HOST, int proxyPort = 8580)
+        private Task<string> ParseGjsjVideoUrlAsyn(string url)
         {
             var task = Task.Run(async () =>
             {
@@ -1698,9 +1783,8 @@ namespace DownloaderForGJSJ
                 taskProgress.TaskProgress = 20;
                 //2.master.m3u8
                 Debug.WriteLine("第2步：" + System.DateTime.Now);
-                string fileName = Directory.GetCurrentDirectory() + "\\tmp";
-                File.WriteAllText(fileName, html);
-                string m3u8Url = ParseGJSJMasterM3u8Url(fileName, out string videoName);
+                File.WriteAllText(TMP_FILE, html);
+                string m3u8Url = ParseGJSJMasterM3u8Url(TMP_FILE, out string videoName);
                 if (m3u8Url.Length == 0)
                 {
                     Debug.WriteLine("获取视频播放连接失败！");
@@ -1727,7 +1811,7 @@ namespace DownloaderForGJSJ
                 }
                 taskProgress.TaskProgress = 60;
                 //20240222
-                VideoDL videoDL = useProxy ? new VideoDL(proxy: $"http://{proxyHost}:{proxyPort}") : new VideoDL();//proxy: "socks5://127.0.0.1:8000"
+                VideoDL videoDL = proxyState.UseProxy ? new VideoDL(proxy: $"http://{proxyState.ProxyHost}:{proxyState.ProxyPort}") : new VideoDL();//proxy: "socks5://127.0.0.1:8000"
                 var hlsDL = videoDL.Hls;
                 MasterPlaylist = hlsDL.ParseMasterPlaylist(m3u8Content, m3u8Url);
                 GjsjVideoQualityList.Clear();
@@ -1765,7 +1849,6 @@ namespace DownloaderForGJSJ
                 title = "";
                 return "";
             }
-            //var htmlFile = "C:\\PRJ\\C#\\GJSJ\\明星证人-code.html";
             var doc = new HtmlAgilityPack.HtmlDocument();
             //M1
             doc.LoadHtml(File.ReadAllText(htmlFile));
@@ -1819,91 +1902,9 @@ namespace DownloaderForGJSJ
         /////////////////////////////////////////////////////
         ///13. 测试 
         #region
-        int progressCnt = 0;
-        private async void btnTest_Click(object sender, RoutedEventArgs e)
+        private void btnTest_Click(object sender, RoutedEventArgs e)
         {
-            int method = 6;
-            if (method == 0)
-            {
-                // currentWebSite.ParseSelector.DownloadPackages.Clear();
-                downloadItemList.Clear();
-            }
-            else if (method == 1)
-            {
-                if (downloadItemList != null && downloadItemList.Count > 0)
-                {
-                    downloadItemList[0].downloadProgress = progressCnt;
-                    progressCnt += 10;
-                    if (progressCnt > 100)
-                    {
-                        progressCnt = 0;
-                    }
-                }
-            }
-            else if (method == 2)
-            {
-                abFetchDownloadUrl.Set(false);
-            }
-            else if (method == 3)
-            {
-                await WaitSomeTime(2000);
-            }
-            else if (method == 5)
-            {
-                GjsjVideoQualityList.Clear();
-                GjsjVideoQualityList.Add("144p");
-                GjsjVideoQualityList.Add("360p");
-                GjsjVideoQualityList.Add("480p");
-                GjsjVideoQualityList.Add("720p");
-                GjsjAudioQualityList.Clear();
-                GjsjAudioQualityList.Add("128k");
-                GjsjAudioQualityList.Add("192k");
-                (int videoIndex, int audioIndex) = showVideoAudioQualitySelectionDialog(GjsjVideoQualityList, GjsjAudioQualityList);
-                Log($"vi = {videoIndex}, ai = {audioIndex}");
-            }
-            else if (method == 6)
-            {
-
-                MessageBoxQuestion("TEST....");
-            }
         }
-
-        private async Task<bool> WaitSomeTime(int delay)
-        {
-            var dialog = ShowProgressDialog("测试。。。");
-            dialog.WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            dialog.Show();// .ShowDialog();
-            await Task.Delay(delay);
-            dialog.CloseMe();
-            return true;
-        }
-
-        private void AddTestData()
-        {
-            //1.清空下载列表
-            downloadItemList.Clear();
-            //LvDownloadItem.Items.Clear();
-
-            //2.以下仅用于测试
-            List<KeyValuePair<string, string>> urls = new List<KeyValuePair<string, string>>();
-            urls.Add(new KeyValuePair<string, string>("JPG_SEQ01.tar.bz2", "http://samples.mplayerhq.hu/JPEG-seq/tmp.tar.bz2"));
-            urls.Add(new KeyValuePair<string, string>("3GP_01.3gp", "http://samples.mplayerhq.hu/mobileVideo_3gp/11082005.3gp"));
-            urls.Add(new KeyValuePair<string, string>("3GP_02.3gp", "http://samples.mplayerhq.hu/mobileVideo_3gp/15082005.3gp"));
-            urls.Add(new KeyValuePair<string, string>("3GP_03.3g2", "http://samples.mplayerhq.hu/mobileVideo_3gp/MAV_0001.3G2"));
-            urls.Add(new KeyValuePair<string, string>("3GP_04.3gp", "http://samples.mplayerhq.hu/mobileVideo_3gp/ambiance.3gp"));
-            urls.Add(new KeyValuePair<string, string>("3GP_05.3g2", "http://samples.mplayerhq.hu/mobileVideo_3gp/Video_020306_001.3g2"));
-            //urls.Add(new KeyValuePair<string, string>("",""));
-            //urls.Add(new KeyValuePair<string, string>("",""));
-            //urls.Add(new KeyValuePair<string, string>("",""));
-            for (int i = 0; i < urls.Count; i++)
-            {
-                DownloadItem item = new DownloadItem(i, urls.ElementAt(i).Key, "", urls.ElementAt(i).Value);
-                downloadItemList.Add(item);
-            }
-        }
-
-
-
         #endregion
 
     }
