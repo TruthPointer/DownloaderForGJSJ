@@ -48,7 +48,7 @@ https://download.visualstudio.microsoft.com/download/pr/f18288f6-1732-415b-b577-
 
 ![](./images/TipFor-Net.desktop-DownloaderForGJSJ.png)
 
-請點擊“Download it now”下載並安裝。
+請點擊“Download it now”下載並安裝。此種情況下下載安裝的是微軟最新版的net Core8運行時。
 
 2、獲取下載連結
 打開乾淨世界網站，找到要下載的視頻頁面，在所在視頻上點擊右鍵，從彈出的功能表中選擇“複製連結”；
