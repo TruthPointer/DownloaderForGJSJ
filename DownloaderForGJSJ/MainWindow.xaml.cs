@@ -1,4 +1,4 @@
-﻿using HtmlAgilityPack;
+using HtmlAgilityPack;
 using HtmlAgilityPack.CssSelectors.NetCore;
 using Newtonsoft.Json;
 using System.Collections.ObjectModel;
@@ -366,6 +366,7 @@ namespace DownloaderForGJSJ
         private string DOWNLOAD_HISTORY_JSON_FILE = APP_PATH + @"\download_history.json";
         private string FFMPEG_FILE = APP_PATH + @"\ffmpeg.exe";
         private string TMP_FILE = APP_PATH + @"\tmp";
+        private string README_FILE = APP_PATH + @"\readme.md";
         ObservableCollection<DownloadItem> downloadItemList = new ObservableCollection<DownloadItem>();
         List<DownloadItem> downloadList = new List<DownloadItem>();
         ObservableTaskProgress<double> taskProgress = new ObservableTaskProgress<double>();
@@ -422,6 +423,17 @@ namespace DownloaderForGJSJ
             ShowTaskInfoOnUI("正在初始化...");
             RegisterDefaultBooleanConverter();
             this.DataContext = taskProgress;
+        }
+
+        private void Windows_Initialized(object sender, EventArgs e)
+        {
+            //1.
+            if (!CheckFFMpegFiles())
+                return;
+            //2.
+            var width = myWindows.Width - 12 - 700 - 30;
+            col5.Width = width - 10;
+            gvcDownloadProgress.Width = width;
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -589,6 +601,18 @@ namespace DownloaderForGJSJ
             }
             if (string.IsNullOrEmpty(errInfo)) return;
             MessageBoxError("代理的" + errInfo + "设置错误！请修改。");
+        }
+
+        private bool CheckFFMpegFiles()
+        {
+            if (!File.Exists(FFMPEG_FILE))
+            {
+                MessageBoxError("没有找到ffmpeg.exe！\n程序需要此文件才能播放节目，请按照打开的说明文件下载！");
+                System.Diagnostics.Process.Start("notepad.exe", README_FILE);
+                Environment.Exit(0);
+                return false;
+            }
+            return true;
         }
 
         #endregion
@@ -800,11 +824,11 @@ namespace DownloaderForGJSJ
             int pos = title.IndexOf('|');
             if (pos > 0)
                 title = title.Substring(0, pos);
-            //20220609 剔除里面看不见的不合规则的字符（实际却是不可见！！！）
-            // Regex.Replace(title, @"[\\/:*?<>|\r\n]", "·"); 但是\r\n单独处理
-            title = Regex.Replace(title, @"[\\/:*?<>|]", "·");//
-            title = title.Replace("｜", " ").Replace("\n", " ").Replace("\r", " ").Replace("\"", " ").Replace("\r\n", " ").Trim();
-            return Regex.Replace(title, $"[ ]+", " ");//20240304 处理连续多个无意义空格的问题
+            //20220609 剔除里面看不见的不合规则的字符（实际却是不可见！！！），但是\r\n单独处理
+            title = Regex.Replace(title, @"[\\/:*?<>|]", " ");//20250815 多个.导致文件名以至于下载出现错误
+            title = title.Replace("｜", " ").Replace("\n", " ").Replace("\r", " ").Replace("\"", " ").Replace("\r\n", " ");
+            //20240304 处理连续多个无意义空格的问题；20250815 多个.导致文件名以至于下载出现错误
+            return Regex.Replace(title, @"[. ]{2,}", " ").Trim();
         }
 
         private string ComputeMD5(string source)
@@ -849,6 +873,8 @@ namespace DownloaderForGJSJ
             if (File.Exists(TMP_FILE))
                 File.Delete(TMP_FILE);
         }
+
+
         #endregion
 
         /////////////////////////////////////////////////////
@@ -1603,15 +1629,6 @@ namespace DownloaderForGJSJ
         /////////////////////////////////////////////////////
         ///10. 一般控件事件【1】
         #region 
-        string strPreviousProxyPort = "";
-        bool bIsPasteOperation = false;
-        private void myWindows_Initialized(object sender, EventArgs e)
-        {
-            var width = myWindows.Width - 12 - 700 - 30;
-            col5.Width = width - 10;
-            gvcDownloadProgress.Width = width;
-        }
-
         private void tbDownloadUrl_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (e.ClickCount == 2)
