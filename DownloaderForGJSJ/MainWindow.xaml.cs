@@ -1,4 +1,4 @@
-using HtmlAgilityPack;
+﻿using HtmlAgilityPack;
 using HtmlAgilityPack.CssSelectors.NetCore;
 using Newtonsoft.Json;
 using System.Collections.ObjectModel;
@@ -144,6 +144,50 @@ namespace DownloaderForGJSJ
             {
                 return $"{byteRangeOffset}-{byteRangeLength}";
             }
+        }
+
+        //20250115 for new changes in the website
+        [Serializable()]
+        class GjsjM3u8Json20250115
+        {
+            public Props props { get; set; }
+
+            public GjsjM3u8Json20250115(Props props, string name)
+            {
+                this.props = props;
+            }
+        }
+
+        [Serializable()]
+        class Props
+        {
+            public PageProps pageProps { get; set; }
+
+            public Props(PageProps pageProps)
+            {
+                this.pageProps = pageProps;
+            }
+        }
+
+        [Serializable()]
+        class PageProps
+        {
+            public Video video { get; set; }
+            public PageProps(Video video)
+            {
+                this.video = video;
+            }
+        }
+
+        [Serializable()]
+        class Video
+        {
+            public string video_Url { get; set; }
+            public Video(string videoUrl)
+            {
+                this.video_Url = videoUrl;
+            }
+
         }
         //////////////////////////////////////////
         [Serializable()]
@@ -381,8 +425,8 @@ namespace DownloaderForGJSJ
         WebSiteDownloadHistory? webSiteDownloadHistory;
 
         //private int oldCmbPageValueIndex = -1;
-        private bool oldUseProxy = false;
-        private int oldProxyPort = 0;
+        //private bool oldUseProxy = false;
+        //private int oldProxyPort = 0;
         private ProxyState proxyState = new ProxyState();
 
         private string userAgent = USER_AGENT_DEFAULT;
@@ -1873,28 +1917,57 @@ namespace DownloaderForGJSJ
             //M2
             //doc.Load(new FileStream(htmlFile, FileMode.Open));
             Log($"ParseGJSJMasterM3u8Url: 尝试使用 SelectorForUrl1 =“{webSite.SelectorForUrl1}” 解析网页文件");
-            IList<HtmlNode> nodes = doc.QuerySelectorAll(webSite.SelectorForUrl1);
+
+            IList<HtmlNode> nodes;
             List<string> list = new List<string>();
-            title = "";
             string m3u8Url = "";
-            if (nodes.Count > 0)
+            title = "";
+            string[] selectors = webSite.SelectorForUrl1.Split("|");
+
+            for (int i = 0; i < selectors.Length; i++)
             {
-                GjsjM3u8Json? json;
-                foreach (HtmlNode node in nodes)
+                nodes = doc.QuerySelectorAll(selectors[i].Trim());
+                if (nodes.Count > 0)
                 {
-                    string html = node.InnerHtml.ToString().Replace("@", "");
-                    json = JsonConvert.DeserializeObject<GjsjM3u8Json>(html);
-                    if (json == null || json.contentUrl.Length == 0)
+                    switch (i)
                     {
-                        continue;
+                        case 0:
+                            GjsjM3u8Json? json;
+                            foreach (HtmlNode node in nodes)
+                            {
+                                string html = node.InnerHtml.ToString().Replace("@", "");
+                                json = JsonConvert.DeserializeObject<GjsjM3u8Json>(html);
+                                if (json == null || json.contentUrl.Length == 0)
+                                {
+                                    continue;
+                                }
+                                m3u8Url = json.contentUrl;
+                                System.Diagnostics.Debug.WriteLine(json.contentUrl);
+                                System.Diagnostics.Debug.WriteLine("------------");
+                                break;//找到第一个就可以了
+                            }
+                            break;
+                        case 1:
+                            GjsjM3u8Json20250115? json20250115;
+                            foreach (HtmlNode node in nodes)
+                            {
+                                string html = node.InnerHtml.ToString().Replace("@", "");
+                                json20250115 = JsonConvert.DeserializeObject<GjsjM3u8Json20250115>(html);
+                                if (json20250115?.props?.pageProps?.video == null || string.IsNullOrEmpty(json20250115.props.pageProps.video.video_Url))
+                                {
+                                    continue;
+                                }
+                                m3u8Url = json20250115.props.pageProps.video.video_Url;
+                                System.Diagnostics.Debug.WriteLine(json20250115.props.pageProps.video.video_Url);
+                                System.Diagnostics.Debug.WriteLine("------------");
+                                break;//找到第一个就可以了
+                            }
+                            break;
                     }
-                    m3u8Url = json.contentUrl;
-                    System.Diagnostics.Debug.WriteLine(json.contentUrl);
-                    System.Diagnostics.Debug.WriteLine("------------");
-                    break;//找到第一个就可以了
+                    if (!string.IsNullOrEmpty(m3u8Url)) break;
                 }
             }
-            else // (nodes.Count == 0)
+            if (string.IsNullOrEmpty(m3u8Url))
             {
                 Log($"ParseGJSJMasterM3u8Url: 尝试使用 SelectorForUrl2 =“{webSite.SelectorForUrl2}” 解析网页文件");
                 nodes = doc.QuerySelectorAll(webSite.SelectorForUrl2);

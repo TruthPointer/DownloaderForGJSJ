@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:DownloaderForGJSJ"
         mc:Ignorable="d"
-        Title="干净世界下载器" Height="200" Width="1088" MinWidth="1088" MinHeight="200" ResizeMode="NoResize" Closed="Window_Closed" Loaded="Window_Loaded" WindowStartupLocation="CenterScreen" Initialized="myWindows_Initialized">
+        Title="干净世界下载器" Height="200" Width="1088" MinWidth="1088" MinHeight="200" ResizeMode="NoResize" Closed="Window_Closed" Loaded="Window_Loaded" WindowStartupLocation="CenterScreen" Initialized="Windows_Initialized">
     <Window.Resources>
         <ToolTip x:Key="InforTip">
             <Grid>

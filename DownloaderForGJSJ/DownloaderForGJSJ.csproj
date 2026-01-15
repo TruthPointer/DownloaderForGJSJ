@@ -7,8 +7,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <ApplicationIcon>downloader_gjsj.ico</ApplicationIcon>
-    <AssemblyVersion>1.6.2025.0816</AssemblyVersion>
-    <FileVersion>1.6.2025.0816</FileVersion>
+    <AssemblyVersion>1.7.2026.0115</AssemblyVersion>
+    <FileVersion>1.7.2026.0115</FileVersion>
     <AssemblyName>干净世界下载器</AssemblyName>
   </PropertyGroup>
 
@@ -37,4 +37,3 @@
   </ItemGroup>
 
 </Project>
-
