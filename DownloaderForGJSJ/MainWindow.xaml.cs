@@ -1749,6 +1749,11 @@ namespace DownloaderForGJSJ
             cancellationToken?.Cancel(true);
 
         }
+
+        private void btnOpenDownloadPath_Click(object sender, RoutedEventArgs e)
+        {
+            Process.Start("Explorer.exe", DOWNLOAD_PATH);
+        }
         #endregion
 
         /////////////////////////////////////////////////////
