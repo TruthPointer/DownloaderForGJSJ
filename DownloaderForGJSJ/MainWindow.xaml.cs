@@ -53,7 +53,11 @@ namespace DownloaderForGJSJ
             public string FileExtension { get; set; }
             public int ThreadNum { get; set; }
             public bool UseProxy { get; set; }
+            public int ProxyIndexSelected { get; set; }
+            public List<string>? Proxies = null;
+            [JsonIgnore]
             public string ProxyHost = PROXY_HOST_DEFAULT;
+            [JsonIgnore]
             public int ProxyPort = PROXY_PORT_DEFAULT;
 
             public List<string>? UserAgents = null;
@@ -436,7 +440,6 @@ namespace DownloaderForGJSJ
         //20220605
         private static string DOWNLOAD_PATH = APP_PATH + @"\下载";
         private readonly int DEFAULT_THREAD_NUM = 3;
-        private readonly List<int> threadNums = new List<int>() { 1, 2, 3, 6, 9 };
         private AtomicBoolean abFetchDownloadUrl = new AtomicBoolean(false);
         private AtomicBoolean abStartDownload = new AtomicBoolean(false);
         private AtomicBoolean abMergeTSFiles = new AtomicBoolean(false);
@@ -507,10 +510,12 @@ namespace DownloaderForGJSJ
             //1.
             LvDownloadItem.ItemsSource = downloadItemList;
             //2.
-            threadNums.ForEach(num => cmbThreadNum.Items.Add(num));
+            for (int i = 1; i <= 10; i++)
+            {
+                cmbThreadNum.Items.Add(i);
+            }
             //3.
             btnTest.Visibility = test ? Visibility.Visible : Visibility.Collapsed;
-
         }
 
         private string getApplicationVersion()
@@ -546,16 +551,8 @@ namespace DownloaderForGJSJ
                 InitWebSiteDownloadHistory();
                 ShowTaskInfoOnUI("准备就绪，欢迎使用本程序！");
                 //初始化线程数量
-                InitThreadNumCombox(webSite.ThreadNum);
-                ckbUseProxy.IsChecked = webSite.UseProxy;
-                InitProxy(webSite);
-                tbProxy.Text = $"{webSite.ProxyHost}:{webSite.ProxyPort}";
-                //
-                if (webSite.UserAgents != null && webSite.UserAgents.Count > 0)
-                {
-                    userAgent = webSite.UserAgents[new Random().Next(webSite.UserAgents.Count)];
-                }
-                Log($"App UserAgent = {userAgent}");
+                InitProxy();
+                InitOthers();
             }
             catch (Exception e)
             {
@@ -577,6 +574,21 @@ namespace DownloaderForGJSJ
                 //settings.Converters.Add(new StorageConverter());
                 string jsonText = File.ReadAllText(SETTINGS_JSON_FILE);
                 WebSite? webSite = JsonConvert.DeserializeObject<WebSite?>(jsonText);
+                //
+                if (webSite == null || webSite.Proxies == null || webSite.Proxies.Count == 0) return null;
+                int removed = webSite.Proxies.RemoveAll(item => !Regex.IsMatch(item, "(\\d+.){3}\\d+:\\d{4,5}"));
+                if (webSite.Proxies.Count == 0)
+                {
+                    webSite.ProxyIndexSelected = -1;
+                    SaveSettings(webSite);
+                    return null;
+                }
+                if (removed > 0 || webSite.ProxyIndexSelected <= 0 || webSite.ProxyIndexSelected > webSite.Proxies.Count)
+                {
+                    webSite.ProxyIndexSelected = 1;
+                    SaveSettings(webSite);
+                }
+
                 Log("ParseMainJson OK...");
                 return webSite;
             }
@@ -622,29 +634,50 @@ namespace DownloaderForGJSJ
             }
         }
 
-        private void InitProxy(WebSite webSite)
+        private void InitProxy()
         {
+            if (webSite == null || webSite.Proxies == null) return;
             //1.
+            ckbUseProxy.IsChecked = webSite.UseProxy;
+            SpProxy.Background = webSite.UseProxy ? null : Brushes.Red;
+            ckbUseProxy.Foreground = webSite.UseProxy ? Brushes.Black : Brushes.White;
+            //2.
+            foreach (var item in webSite.Proxies)
+            {
+                CmbProxy.Items.Add(item);
+            }
+            CmbProxy.SelectedIndex = webSite.ProxyIndexSelected - 1;
+            //3.
+            ParseProxy(webSite.Proxies[webSite.ProxyIndexSelected - 1], out string proxyHost, out int proxyPort);
+            webSite.ProxyHost = proxyHost;
+            webSite.ProxyPort = proxyPort;
+            //4.
             proxyState.UseProxy = webSite.UseProxy;
             proxyState.IsProxyChanged = false;
             proxyState.ProxyHost = webSite.ProxyHost;
             proxyState.ProxyPort = webSite.ProxyPort;
-            //2.
-            string errInfo = "";
-            if (!IsProxyHostValid(webSite.ProxyHost))
-            {
-                errInfo += "主机";
-            }
+        }
 
-            if (!IsProxyPortValid(webSite.ProxyPort))
+        private void InitOthers()
+        {
+            if (webSite == null) return;
+            //1.
+            var threadIndex = cmbThreadNum.Items.IndexOf(webSite.ThreadNum);
+            if (threadIndex == -1)
             {
-                if (string.IsNullOrEmpty(errInfo))
-                    errInfo += "端口";
-                else
-                    errInfo += "和端口";
+                cmbThreadNum.SelectedIndex = 2;//num = 3
+                SaveSettings(webSite);
             }
-            if (string.IsNullOrEmpty(errInfo)) return;
-            MessageBoxError("代理的" + errInfo + "设置错误！请修改。");
+            else
+                cmbThreadNum.SelectedIndex = threadIndex;
+            //2.
+            if (webSite.UserAgents != null && webSite.UserAgents.Count > 0)
+            {
+                userAgent = webSite.UserAgents[new Random().Next(webSite.UserAgents.Count)];
+            }
+            Log($"App UserAgent = {userAgent}");
+            //3
+            btnStopDownload.IsEnabled = false;
         }
 
         private bool CheckFFMpegFiles()
@@ -666,28 +699,32 @@ namespace DownloaderForGJSJ
         #region
         private void Window_Closed(object sender, EventArgs e)
         {
-            CheckProxyStateOnCloseApp();
-            SaveMainJson();
+            SaveSettings(webSite);
+            SaveDownloadHistory();
             ClearTmpFile();
         }
 
         /// <summary>
         /// 代理的保存，为上一次正确运行的代理状态参数
         /// </summary>
-        private void SaveMainJson()
+        private void SaveSettings(WebSite? webSite)
         {
-            //注意2个index要加 1
             try
             {
-                //1.
                 if (webSite == null) return;
-                webSite.ThreadNum = threadNums[cmbThreadNum.SelectedIndex];
-                webSite.UseProxy = (bool)(ckbUseProxy.IsChecked ?? false);
                 string json = JsonConvert.SerializeObject(webSite, Formatting.Indented);
                 File.WriteAllText(SETTINGS_JSON_FILE, json);
-                //2.
-                //2.1 检查是否需要保存
-                //if (webSite == null) return;
+            }
+            catch (Exception e1)
+            {
+                Log(e1.Message);
+            }
+        }
+
+        private void SaveDownloadHistory()
+        {
+            try
+            {
                 List<DownloadPackage> downloadPackages = PrepareDownloadPackageData();
                 if (downloadPackages.Count == 0)
                 {
@@ -698,14 +735,16 @@ namespace DownloaderForGJSJ
                 webSiteDownloadHistory = new WebSiteDownloadHistory(WEB_SITE_NAME, downloadPackages);
                 //2.3
                 webSiteDownloadHistory.CurrentTargetUrl = tbTaskTarget.Text;
-                json = JsonConvert.SerializeObject(webSiteDownloadHistory, Formatting.Indented);
+                string json = JsonConvert.SerializeObject(webSiteDownloadHistory, Formatting.Indented);
                 File.WriteAllText(DOWNLOAD_HISTORY_JSON_FILE, json);
             }
             catch (Exception e1)
             {
                 Log(e1.Message);
             }
+
         }
+
 
         private List<DownloadPackage> PrepareDownloadPackageData()//20240225 修改
         {
@@ -856,6 +895,21 @@ namespace DownloaderForGJSJ
             return result;
         }
 
+        private void ParseProxy(string proxy, out string proxyHost, out int proxyPort)
+        {
+            var groups = Regex.Match(proxy, "((\\d+.){3}\\d+):(\\d{4,5})").Groups;
+            if (groups.Count == 4)
+            {
+                proxyHost = groups[1].Value;
+                proxyPort = Int32.Parse(groups[3].Value);
+            }
+            else
+            {
+                proxyHost = "";
+                proxyPort = 0;
+            }
+        }
+
         public void Log(string msg)
         {
             //Console.WriteLine(msg);
@@ -929,7 +983,6 @@ namespace DownloaderForGJSJ
         {
             //1.检查网站的支持情况
             //2.检查网络状态
-            if (!ValidateProxy()) return;
             //3.检查要解析的连接或文件
             string url = tbTaskTarget.Text.Trim();
             if (!CheckTbWebUrl(url)) return;
@@ -1031,93 +1084,6 @@ namespace DownloaderForGJSJ
             return fileName + webSite.FileExtension;
         }
 
-        private bool ValidateProxy()
-        {
-            bool useProxy = (bool)(ckbUseProxy.IsChecked ?? false);
-            if (webSite != null)
-                webSite.UseProxy = useProxy;
-            proxyState.UseProxy = useProxy;
-            if (!useProxy) return true;
-
-            return ValidateTextBoxProxy();
-        }
-
-        private (string host, string port) ParseTbProxy()
-        {
-            string proxy = tbProxy.Text.Trim();
-            var para = proxy.Split(':');
-            if (para.Length != 2)
-            {
-                return ("", "");
-            }
-            return (para[0], para[1]);
-        }
-
-        private bool ValidateTextBoxProxy()
-        {
-            if (webSite == null) return false;
-
-            var (sHost, sPort) = ParseTbProxy();
-            if (!IsProxyHostValid(sHost))
-            {
-                MessageBoxError("代理的主机设置错误！");
-                return false;
-            }
-            if (!IsProxyPortValid(sPort))
-            {
-                MessageBoxError("代理的端口设置错误！");
-                return false;
-            }
-
-            int proxyPort = Int32.Parse(sPort);
-
-            proxyState.IsProxyChanged = webSite.ProxyHost != sHost || webSite.ProxyPort != proxyPort;
-            proxyState.ProxyHost = sHost;
-            proxyState.ProxyPort = proxyPort;
-            webSite.ProxyHost = sHost;
-            webSite.ProxyPort = proxyPort;
-            if (proxyState.IsProxyChanged)
-            {
-                SaveMainJson();
-            }
-            Log($"ValidateTextBoxProxy: useProxy = {proxyState.UseProxy}, isProxyChanged = {proxyState.IsProxyChanged}, host = {proxyState.ProxyHost}, port = {proxyState.ProxyPort}");
-            return true;
-        }
-
-        private void CheckProxyStateOnCloseApp()
-        {
-            if (webSite == null) return;
-            webSite.UseProxy = (bool)(ckbUseProxy.IsChecked ?? false);
-
-            var (sHost, sPort) = ParseTbProxy();
-            if (!IsProxyHostValid(sHost) || !IsProxyPortValid(sPort))
-            {
-                MessageBoxError("代理设置错误！不会保存最新的代理设置。");
-                return;
-            }
-            int proxyPort = Int32.Parse(sPort);
-            webSite.ProxyHost = sHost;
-            webSite.ProxyPort = proxyPort;
-        }
-
-        private bool IsProxyHostValid(string host)
-        {
-            return !string.IsNullOrEmpty(host) && Regex.IsMatch(host, @"^([\w-]+\.)+[\w-]+(/[\w-./?%&=]*)?$");
-        }
-
-        private bool IsProxyPortValid(string portString)
-        {
-            if (string.IsNullOrEmpty(portString)) return false;
-            if (!Regex.IsMatch(portString, @"\d+")) return false;
-            int port = Int32.Parse(portString);
-            return port >= 1024 && port <= 65535;
-        }
-
-        private bool IsProxyPortValid(int port)
-        {
-            return port >= 1024 && port <= 65535;
-        }
-
         #endregion
 
         /////////////////////////////////////////////////////
@@ -1128,7 +1094,6 @@ namespace DownloaderForGJSJ
             //0.
             errors.Clear();
             //1.检查网络状态
-            if (!ValidateProxy()) return;
             //2.检查当前完成状态
             if (downloadItemList.Count == 0)
             {
@@ -1511,13 +1476,6 @@ namespace DownloaderForGJSJ
         /////////////////////////////////////////////////////
         ///8.控件控制
         #region
-        private void InitThreadNumCombox(int threadNum)
-        {
-            int pos = threadNums.IndexOf(threadNum);
-            int posDefault = threadNums.IndexOf(DEFAULT_THREAD_NUM);
-            cmbThreadNum.SelectedIndex = pos == -1 ? posDefault : pos;
-        }
-
         private void InitSavedDownloadPackages(List<DownloadPackage> packages)
         {
             try
@@ -1617,10 +1575,10 @@ namespace DownloaderForGJSJ
 
                 btnFetchDownloadLinks.IsEnabled = isEnabled;
                 btnStartDownload.IsEnabled = isEnabled;
-                btnStopDownload.IsEnabled = task == AppTask.TASK_DOWNLOAD ? true : isEnabled;
+                btnStopDownload.IsEnabled = task == AppTask.TASK_DOWNLOAD ? !isEnabled : false;
 
                 ckbUseProxy.IsEnabled = isEnabled;
-                tbProxy.IsEnabled = isEnabled;
+                CmbProxy.IsEnabled = isEnabled;
                 cmbThreadNum.IsEnabled = isEnabled;
             });
         }
@@ -1688,7 +1646,8 @@ namespace DownloaderForGJSJ
         private void cmbThreadNum_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (webSite == null) return;
-            webSite.ThreadNum = threadNums[cmbThreadNum.SelectedIndex];
+            webSite.ThreadNum = (int)(cmbThreadNum.SelectedItem);
+            SaveSettings(webSite);
         }
 
         private void btnLvItemPause_Click(object sender, RoutedEventArgs e)
@@ -1700,9 +1659,31 @@ namespace DownloaderForGJSJ
 
         private void ckbUseProxy_Click(object sender, RoutedEventArgs e)
         {
+            if (webSite == null) return;
             bool isChecked = ckbUseProxy.IsChecked ?? false;
-            bdProxySelection.BorderBrush = isChecked ? null : Brushes.Red;
+            webSite.UseProxy = isChecked;
+            SaveSettings(webSite);
+            SpProxy.Background = isChecked ? null : Brushes.Red;
+            ckbUseProxy.Foreground = isChecked ? Brushes.Black : Brushes.White;
         }
+
+        private void CmbProxy_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            string proxy = CmbProxy.SelectedItem?.ToString() ?? "";
+            if (string.IsNullOrEmpty(proxy)) return;
+
+            ParseProxy(proxy, out string proxyHost, out int proxyPort);
+            if (webSite == null) return;
+            webSite.ProxyIndexSelected = CmbProxy.SelectedIndex + 1;
+            webSite.ProxyHost = proxyHost;
+            webSite.ProxyPort = proxyPort;
+            SaveSettings(webSite);
+
+            proxyState.IsProxyChanged = true;
+            proxyState.ProxyHost = proxyHost;
+            proxyState.ProxyPort = proxyPort;
+        }
+
         #endregion
 
         /////////////////////////////////////////////////////
@@ -1988,7 +1969,11 @@ namespace DownloaderForGJSJ
                 Debug.WriteLine("没有找到 m3u8 的下载连接……");
                 return "";
             }
-            title = doc.QuerySelector("head title").InnerText;
+            title = doc.QuerySelector("h1[data-testid=vdp-title]")?.InnerText ?? "";
+            if (string.IsNullOrEmpty(title))
+            {
+                title = doc.QuerySelector("head title")?.InnerText ?? "标题未找到（自己下载后修改）";
+            }
             title = PatchTitle(title);
             return m3u8Url;
         }
